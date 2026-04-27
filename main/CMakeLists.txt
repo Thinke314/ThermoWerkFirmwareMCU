@@ -6,4 +6,8 @@ idf_component_register(
         "uart_protocol.c"
     INCLUDE_DIRS
         "."
+    REQUIRES
+        json
+        driver
+        esp_timer
 )
