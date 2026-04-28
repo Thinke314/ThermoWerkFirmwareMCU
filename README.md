@@ -4,6 +4,20 @@ ESP32-S3 firmware repository for the ThermoWerk3p PV-surplus heater controller /
 
 This repository is the MCU-only product firmware line. One ESP32-S3 shall run the local control loop, safety logic, SSR/burst-fire output, local web interface and optional cloud telemetry. Linux, Docker, SQLite and Node.js are not required on the device.
 
+## Product direction
+
+The current product requirements are written into the repository and should guide all future implementation work:
+
+```text
+docs/product_requirements.md        Full product requirements from the boiler/heater controller concept
+docs/ui_requirements.md             Polished local ESP32 UI requirements
+docs/ota_update_requirements.md     OTA update requirements and safety rules
+docs/implementation_roadmap.md      Milestone plan for build, UI, OTA, NVS, Wi-Fi, Modbus, safety
+docs/firmware_spec.md               Firmware architecture and runtime responsibilities
+docs/uart_protocol.md               UART/JSON protocol
+docs/paperclip_prompt.md            Agent working instruction
+```
+
 ## Target architecture
 
 - ESP32-S3 as the main controller.
@@ -13,6 +27,7 @@ This repository is the MCU-only product firmware line. One ESP32-S3 shall run th
 - Local REST API for status, configuration, process values, commands, history and cloud telemetry setup.
 - UART line-based JSON protocol remains available for debug, gateway or production test.
 - Optional HTTP cloud telemetry client.
+- Future OTA update support is required.
 - Control remains local even when cloud is offline.
 - Default SSR output: GPIO17.
 - Default control period: 20 ms, matching one full 50 Hz mains cycle.
@@ -53,15 +68,38 @@ This repository is the MCU-only product firmware line. One ESP32-S3 shall run th
 - Bresenham-style full-wave distribution over a burst window.
 - JSON status output every 500 ms over UART.
 
+## Required next features
+
+These are not optional for the product direction:
+
+- build and flash baseline must be kept working
+- polished mobile-first local UI
+- OTA update module and API
+- OTA-capable partition layout
+- NVS persistent configuration
+- Wi-Fi station setup with fallback AP
+- real meter input: Modbus TCP and/or Modbus RTU
+- real temperature input abstraction
+- zero-cross input and sync-loss fault
+- hardware safety inputs
+- factory reset path
+- production/recovery documentation
+
 ## Repository structure
 
 ```text
 .
 ├── CMakeLists.txt
 ├── README.md
+├── partitions.csv
+├── sdkconfig.defaults
 ├── docs/
 │   ├── firmware_spec.md
+│   ├── implementation_roadmap.md
+│   ├── ota_update_requirements.md
 │   ├── paperclip_prompt.md
+│   ├── product_requirements.md
+│   ├── ui_requirements.md
 │   └── uart_protocol.md
 ├── main/
 │   ├── CMakeLists.txt
@@ -84,7 +122,7 @@ This repository is the MCU-only product firmware line. One ESP32-S3 shall run th
 │   ├── uart_protocol.h
 │   ├── wifi_manager.c
 │   └── wifi_manager.h
-└── sdkconfig.defaults
+└── .github/workflows/esp-idf-build.yml
 ```
 
 ## Quick setup in VS Code / ESP-IDF
