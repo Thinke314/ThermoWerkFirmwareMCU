@@ -8,19 +8,23 @@
 #include "freertos/task.h"
 
 #include "control.h"
+#include "output_driver.h"
 #include "safety.h"
 #include "uart_protocol.h"
 
 #define THERMOWORK_UART_PORT UART_NUM_0
 #define THERMOWORK_UART_BAUD_RATE 115200
-#define THERMOWORK_UART_RX_BUFFER_SIZE 1024
-#define THERMOWORK_LINE_BUFFER_SIZE 512
-#define THERMOWORK_STATUS_BUFFER_SIZE 256
-#define THERMOWORK_CONTROL_PERIOD_MS 200
+#define THERMOWORK_UART_RX_BUFFER_SIZE 2048
+#define THERMOWORK_LINE_BUFFER_SIZE 768
+#define THERMOWORK_STATUS_BUFFER_SIZE 512
+#define THERMOWORK_CONTROL_PERIOD_MS 20
+#define THERMOWORK_STATUS_PERIOD_MS 500
+#define THERMOWORK_FULL_WAVE_MS_50HZ 20
 
 static const char *TAG = "ThermoWerk";
 
 static uint64_t g_last_rx_us = 0;
+static uint64_t g_last_status_us = 0;
 static thermowork_process_values_t g_last_values;
 
 static uint32_t age_ms_since(uint64_t timestamp_us)
@@ -39,6 +43,16 @@ static uint32_t age_ms_since(uint64_t timestamp_us)
         return UINT32_MAX;
     }
     return (uint32_t)diff_ms;
+}
+
+static bool period_elapsed(uint64_t *last_us, uint32_t period_ms)
+{
+    uint64_t now_us = (uint64_t)esp_timer_get_time();
+    if (*last_us == 0 || ((now_us - *last_us) / 1000ULL) >= period_ms) {
+        *last_us = now_us;
+        return true;
+    }
+    return false;
 }
 
 static void uart_init(void)
@@ -63,6 +77,17 @@ static void uart_init(void)
     ESP_ERROR_CHECK(uart_param_config(THERMOWORK_UART_PORT, &uart_config));
 }
 
+static void output_driver_sync_from_config(const thermowork_control_config_t *config)
+{
+    thermowork_output_config_t output_config = {
+        .ssr_gpio_pin = config->ssr_gpio_pin,
+        .output_active_high = config->output_active_high,
+        .burst_window_ms = config->burst_window_ms,
+        .full_wave_ms = THERMOWORK_FULL_WAVE_MS_50HZ,
+    };
+    thermowork_output_driver_update_config(&output_config);
+}
+
 static void handle_uart_line(const char *line)
 {
     thermowork_uart_message_t message;
@@ -73,21 +98,41 @@ static void handle_uart_line(const char *line)
         g_last_values = message.process_values;
         g_last_rx_us = (uint64_t)esp_timer_get_time();
         thermowork_control_update_process_values(&g_last_values);
-        ESP_LOGI(TAG, "Process values updated: grid=%ld W pv=%ld W enable=%d",
+        ESP_LOGI(TAG, "Inputs: grid=%ld W pv=%ld W enable=%d temp_valid=%d",
                  (long)g_last_values.grid_power_w,
                  (long)g_last_values.pv_power_w,
-                 g_last_values.enable);
+                 g_last_values.enable,
+                 g_last_values.temp_valid);
         break;
 
     case THERMOWORK_UART_MSG_CONFIG:
         thermowork_control_set_config(&message.config);
-        ESP_LOGI(TAG, "Config updated: max=%ld W mode=%d",
+        output_driver_sync_from_config(thermowork_control_get_config());
+        ESP_LOGI(TAG, "Config: max=%ld W mode=%d gpio=%d window=%lu ms",
                  (long)message.config.max_power_w,
-                 (int)message.config.mode);
+                 (int)message.config.mode,
+                 message.config.ssr_gpio_pin,
+                 (unsigned long)message.config.burst_window_ms);
         break;
 
     case THERMOWORK_UART_MSG_COMMAND:
-        ESP_LOGI(TAG, "Command received: enable_outputs=%d", message.command_enable_outputs);
+        if (message.command_emergency_stop) {
+            g_last_values.emergency_stop = true;
+            g_last_values.enable = false;
+            thermowork_output_driver_force_off();
+            thermowork_control_update_process_values(&g_last_values);
+            ESP_LOGW(TAG, "Emergency stop command received");
+        }
+        if (message.command_reset_fault) {
+            g_last_values.emergency_stop = false;
+            thermowork_control_update_process_values(&g_last_values);
+            ESP_LOGI(TAG, "Fault reset command received");
+        }
+        if (message.command_enable_outputs) {
+            g_last_values.enable = true;
+            thermowork_control_update_process_values(&g_last_values);
+            ESP_LOGI(TAG, "Enable outputs command received");
+        }
         break;
 
     case THERMOWORK_UART_MSG_INVALID:
@@ -111,7 +156,7 @@ static void uart_rx_task(void *arg)
             THERMOWORK_UART_PORT,
             &byte,
             1,
-            pdMS_TO_TICKS(50)
+            pdMS_TO_TICKS(20)
         );
 
         if (len <= 0) {
@@ -159,19 +204,24 @@ static void control_task(void *arg)
             output.outputs_enabled = false;
         }
 
-        int written = thermowork_uart_format_status(
-            status_buffer,
-            sizeof(status_buffer),
-            &output,
-            thermowork_fault_to_string(safety.fault)
-        );
+        thermowork_output_driver_apply(&output);
+        thermowork_output_state_t output_state = thermowork_output_driver_get_state();
 
-        if (written > 0) {
-            uart_write_bytes(THERMOWORK_UART_PORT, status_buffer, strlen(status_buffer));
+        if (period_elapsed(&g_last_status_us, THERMOWORK_STATUS_PERIOD_MS)) {
+            int written = thermowork_uart_format_status(
+                status_buffer,
+                sizeof(status_buffer),
+                &output,
+                config,
+                values,
+                thermowork_fault_to_string(safety.fault),
+                output_state.output_level
+            );
+
+            if (written > 0) {
+                uart_write_bytes(THERMOWORK_UART_PORT, status_buffer, strlen(status_buffer));
+            }
         }
-
-        // TODO: connect output.duty_permille to burst-fire/full-wave SSR scheduler.
-        // For safety, no GPIO output is driven in this first skeleton.
 
         vTaskDelay(pdMS_TO_TICKS(THERMOWORK_CONTROL_PERIOD_MS));
     }
@@ -179,7 +229,7 @@ static void control_task(void *arg)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "ThermoWerkFirmwareMCU starting");
+    ESP_LOGI(TAG, "ThermoWerk3p ESP32-S3 firmware starting");
 
     thermowork_control_init();
     thermowork_safety_init();
@@ -188,7 +238,24 @@ void app_main(void)
 
     memset(&g_last_values, 0, sizeof(g_last_values));
     g_last_values.enable = false;
+    g_last_values.temp_valid = false;
     g_last_values.rx_age_ms = UINT32_MAX;
+    g_last_values.tank_top_c = 20.0f;
+    g_last_values.tank_mid_c = 20.0f;
+    g_last_values.tank_bottom_c = 20.0f;
+    g_last_values.flow_line_c = 20.0f;
+    g_last_values.return_line_c = 20.0f;
+    g_last_values.ambient_c = 20.0f;
+
+    thermowork_control_update_process_values(&g_last_values);
+
+    thermowork_output_config_t output_config = {
+        .ssr_gpio_pin = thermowork_control_get_config()->ssr_gpio_pin,
+        .output_active_high = thermowork_control_get_config()->output_active_high,
+        .burst_window_ms = thermowork_control_get_config()->burst_window_ms,
+        .full_wave_ms = THERMOWORK_FULL_WAVE_MS_50HZ,
+    };
+    thermowork_output_driver_init(&output_config);
 
     xTaskCreate(uart_rx_task, "thermowork_uart_rx", 4096, NULL, 10, NULL);
     xTaskCreate(control_task, "thermowork_control", 4096, NULL, 8, NULL);
