@@ -11,6 +11,7 @@ typedef enum {
     THERMOWORK_CONTROL_MODE_DISABLED = 0,
     THERMOWORK_CONTROL_MODE_PV_SURPLUS,
     THERMOWORK_CONTROL_MODE_MANUAL_POWER,
+    THERMOWORK_CONTROL_MODE_BURST_PERCENT,
     THERMOWORK_CONTROL_MODE_TEST
 } thermowork_control_mode_t;
 
@@ -18,9 +19,15 @@ typedef struct {
     int32_t grid_power_w;      // Positive import, negative export/surplus
     int32_t pv_power_w;
     int32_t load_power_w;
-    float temp_1_c;
-    float temp_2_c;
+    float tank_top_c;
+    float tank_mid_c;
+    float tank_bottom_c;
+    float flow_line_c;
+    float return_line_c;
+    float ambient_c;
+    bool temp_valid;
     bool enable;
+    bool emergency_stop;
     uint32_t rx_age_ms;
 } thermowork_process_values_t;
 
@@ -30,8 +37,12 @@ typedef struct {
     int32_t min_power_w;
     int32_t manual_power_w;
     int32_t target_grid_power_w;
+    uint16_t burst_target_permille;
     float temperature_limit_c;
     uint32_t uart_timeout_ms;
+    uint32_t burst_window_ms;
+    int ssr_gpio_pin;
+    bool output_active_high;
 } thermowork_control_config_t;
 
 typedef struct {
