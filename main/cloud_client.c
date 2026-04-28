@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "app_state.h"
+#include "esp_err.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
