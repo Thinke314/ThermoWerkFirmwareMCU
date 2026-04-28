@@ -1,14 +1,25 @@
 idf_component_register(
     SRCS
         "app_main.c"
+        "app_state.c"
+        "cloud_client.c"
         "control.c"
+        "history_store.c"
+        "local_api.c"
         "output_driver.c"
         "safety.c"
         "uart_protocol.c"
+        "wifi_manager.c"
     INCLUDE_DIRS
         "."
     REQUIRES
         json
         driver
         esp_timer
+        esp_http_server
+        esp_http_client
+        esp_wifi
+        esp_netif
+        esp_event
+        nvs_flash
 )
