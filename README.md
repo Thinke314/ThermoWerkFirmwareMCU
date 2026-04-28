@@ -2,25 +2,41 @@
 
 ESP32-S3 firmware repository for the ThermoWerk3p PV-surplus heater controller / Leistungssteller MCU.
 
-This repository is the MCU-only firmware version of the earlier ThermoWerk3p Linux/Node prototype. The product direction is now: one ESP32-S3 runs the local control loop, safety logic and SSR/burst-fire output. Linux, Docker, SQLite and Node.js are not required for the device firmware.
+This repository is the MCU-only product firmware line. One ESP32-S3 shall run the local control loop, safety logic, SSR/burst-fire output, local web interface and optional cloud telemetry. Linux, Docker, SQLite and Node.js are not required on the device.
 
 ## Target architecture
 
 - ESP32-S3 as the main controller.
 - Local realtime control on the ESP32.
-- UART line-based JSON protocol for initial host/debug input.
-- Process values can come from an external gateway, Modbus bridge, UI board or later directly from ESP32 interfaces.
-- ESP32 decides locally how to drive the SSR output.
+- Local Wi-Fi setup access point.
+- Local embedded web interface served directly from the ESP32.
+- Local REST API for status, configuration, process values, commands, history and cloud telemetry setup.
+- UART line-based JSON protocol remains available for debug, gateway or production test.
+- Optional HTTP cloud telemetry client.
+- Control remains local even when cloud is offline.
 - Default SSR output: GPIO17.
 - Default control period: 20 ms, matching one full 50 Hz mains cycle.
 - Output method: burst-fire / full-wave packet control for zero-cross SSRs.
 - Outputs fail safe to OFF.
 
-## Implemented in this first ESP32 version
+## Implemented now
 
 - ESP-IDF project structure for VS Code.
 - ESP32-S3 default target.
+- Local AP: `ThermoWerk-Setup`, password `thermowerk`.
+- Embedded local web interface on port 80.
+- REST endpoints:
+  - `GET /`
+  - `GET /api/status`
+  - `GET /api/history`
+  - `POST /api/config`
+  - `POST /api/inputs`
+  - `POST /api/command`
+  - `POST /api/cloud`
 - UART JSON input parser.
+- Runtime state module shared by UART, web API, control loop and cloud task.
+- Local RAM ring-buffer history.
+- Optional HTTP cloud telemetry task.
 - ThermoWerk3p-style modes:
   - `disabled`
   - `pv_surplus`
@@ -29,13 +45,13 @@ This repository is the MCU-only firmware version of the earlier ThermoWerk3p Lin
   - `test`
 - PV-surplus power calculation.
 - Manual power command.
-- Burst-percent command compatible with the former prototype idea.
+- Burst-percent command.
 - Temperature safety with tank/flow/return channels.
 - Emergency stop flag.
-- UART timeout watchdog.
+- UART/process-value timeout watchdog.
 - GPIO SSR output driver.
 - Bresenham-style full-wave distribution over a burst window.
-- JSON status output every 500 ms.
+- JSON status output every 500 ms over UART.
 
 ## Repository structure
 
@@ -50,45 +66,38 @@ This repository is the MCU-only firmware version of the earlier ThermoWerk3p Lin
 ├── main/
 │   ├── CMakeLists.txt
 │   ├── app_main.c
+│   ├── app_state.c
+│   ├── app_state.h
+│   ├── cloud_client.c
+│   ├── cloud_client.h
 │   ├── control.c
 │   ├── control.h
+│   ├── history_store.c
+│   ├── history_store.h
+│   ├── local_api.c
+│   ├── local_api.h
 │   ├── output_driver.c
 │   ├── output_driver.h
 │   ├── safety.c
 │   ├── safety.h
 │   ├── uart_protocol.c
-│   └── uart_protocol.h
+│   ├── uart_protocol.h
+│   ├── wifi_manager.c
+│   └── wifi_manager.h
 └── sdkconfig.defaults
 ```
 
 ## Quick setup in VS Code / ESP-IDF
 
-Clone:
-
 ```bash
 git clone https://github.com/Thinke314/ThermoWerkFirmwareMCU.git
 cd ThermoWerkFirmwareMCU
-```
-
-Set target:
-
-```bash
 idf.py set-target esp32s3
-```
-
-Build:
-
-```bash
 idf.py build
-```
-
-Flash and monitor on Windows:
-
-```bash
 idf.py -p COMx flash monitor
 ```
 
-Flash and monitor on Linux:
+On Linux:
 
 ```bash
 idf.py -p /dev/ttyUSB0 flash monitor
@@ -100,7 +109,75 @@ Exit monitor:
 Ctrl + ]
 ```
 
-## First functional test over UART monitor
+## Local web interface
+
+After flashing, the ESP32 starts a fallback access point:
+
+```text
+SSID: ThermoWerk-Setup
+Password: thermowerk
+```
+
+Connect to this Wi-Fi and open the ESP32 AP address in the browser, typically:
+
+```text
+http://192.168.4.1/
+```
+
+The local UI allows first testing of:
+
+- current status
+- control mode
+- nominal power
+- manual power
+- burst percentage
+- simulated grid/PV/temperature inputs
+- emergency stop
+- cloud telemetry endpoint
+
+## Local API examples
+
+Status:
+
+```bash
+curl http://192.168.4.1/api/status
+```
+
+History:
+
+```bash
+curl http://192.168.4.1/api/history
+```
+
+Config, 30% burst test:
+
+```bash
+curl -X POST http://192.168.4.1/api/config \
+  -d '{"type":"config","control_mode":"burst_percent","power_nominal_w":3500,"target_power_percent":30,"burst_window_ms":1000,"ssr_gpio_pin":17,"temperature_limit_c":85,"uart_timeout_ms":3000}'
+```
+
+Inputs / enable:
+
+```bash
+curl -X POST http://192.168.4.1/api/inputs \
+  -d '{"type":"process_values","grid_power_w":-1200,"pv_power_w":5400,"tank_top_c":50,"tank_mid_c":45,"tank_bottom_c":40,"flow_line_c":38,"return_line_c":35,"ambient_c":22,"temp_valid":true,"enable":true}'
+```
+
+Emergency stop:
+
+```bash
+curl -X POST http://192.168.4.1/api/command \
+  -d '{"type":"command","emergency_stop":true}'
+```
+
+Cloud telemetry setup:
+
+```bash
+curl -X POST http://192.168.4.1/api/cloud \
+  -d '{"enabled":true,"endpoint_url":"https://example.com/telemetry","device_id":"thermowerk-esp32","publish_interval_s":30}'
+```
+
+## UART test
 
 Send config:
 
@@ -119,7 +196,7 @@ Expected result:
 - Status JSON appears every 500 ms.
 - `outputs_enabled` becomes `true` if safety is OK.
 - GPIO17 toggles according to the burst scheduler.
-- With `target_power_percent:30`, the output is ON for roughly 30% of the full waves within the configured burst window.
+- With `target_power_percent:30`, output is ON for roughly 30% of the full waves within the configured burst window.
 
 ## PV-surplus mode
 
@@ -147,11 +224,13 @@ Output is forced OFF when any of these conditions are true:
 
 - `enable` is false.
 - `emergency_stop` is true.
-- UART process values timeout.
+- UART/process-value timeout.
 - Temperatures are invalid.
 - Any main temperature channel exceeds `temperature_limit_c`.
 - Configuration is invalid.
 - Control mode is `disabled`.
+
+Cloud failure does not stop the local control loop. Cloud is telemetry only in this version.
 
 ## Hardware warning
 
