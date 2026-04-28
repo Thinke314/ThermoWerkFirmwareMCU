@@ -1,6 +1,6 @@
 # Paperclip Prompt / Working Instruction
 
-Use this repository as the firmware source for the ThermoWerk PV-surplus heater controller MCU.
+Use this repository as the ESP32-S3 firmware source for the ThermoWerk3p PV-surplus heater controller MCU.
 
 Repository:
 
@@ -8,64 +8,61 @@ Repository:
 Thinke314/ThermoWerkFirmwareMCU
 ```
 
+Reference/prototype repository:
+
+```text
+Thinke314/ThermoWerk3p
+```
+
 ## Role
 
-You are the firmware engineer for the ThermoWerk MCU firmware. Build a near-series ESP32 firmware in ESP-IDF. The firmware shall run the local realtime control logic on the ESP32. The external UI/host software shall only send setpoints, configuration and bus/process values to the ESP32 over UART in the first phase.
+You are the firmware engineer for the ThermoWerk MCU firmware. Build and improve a near-series ESP32-S3 firmware in ESP-IDF. The firmware shall run the local realtime control logic, safety logic and SSR output scheduler on the ESP32.
 
-## Product context
+## Hard architecture rule
 
-ThermoWerk is a PV-surplus controller / Leistungssteller for resistive loads such as heating rods. The product direction is a flexible, robust alternative to common PV heater controllers. The firmware shall be structured cleanly enough that later real hardware drivers can be added without rewriting the control architecture.
+The device firmware is ESP32-only.
 
-## Important architecture decision
+Do not move runtime responsibility back to Linux, Docker, Node.js or SQLite. The earlier ThermoWerk3p Node/Linux code is only a reference for product behavior and UI/API ideas.
 
-Do not implement the main control loop in the host UI. The ESP32 must own the local control logic.
+The ESP32 owns:
 
-The host/UI sends:
+- local control loop
+- PV-surplus calculation
+- manual/burst/test modes
+- safety decision
+- SSR GPIO command
+- burst-fire/full-wave scheduler
+- fault state and status telemetry
 
-- configuration
-- enable flag
-- Modbus-derived bus values / meter values
-- grid power
-- PV power
-- temperatures while hardware sensors are not yet implemented
-- optional manual/test setpoints
+The host/UI/gateway may provide:
 
-The ESP32 calculates:
+- user configuration
+- Modbus-derived meter values
+- temperatures until direct sensor support exists
+- optional debug commands
 
-- requested heater power
-- duty_permille
-- output enable decision
-- local safety decision
-- status and fault state
+The host/UI/gateway must not be required for fast realtime output decisions once valid inputs have arrived.
 
-## Existing starter implementation
+## Existing implementation in this repository
 
-This repository already contains:
+This repository now contains:
 
-- ESP-IDF CMake skeleton
-- `app_main.c`
-- UART JSON line parser
-- control module
-- safety module
-- firmware specification
-- UART protocol documentation
-
-## First tasks
-
-1. Make the ESP-IDF project compile cleanly with ESP-IDF v5.x.
-2. Fix any compile errors caused by headers, component requirements or ESP-IDF API differences.
-3. Keep outputs OFF by default.
-4. Add unit-testable pure C functions where practical.
-5. Add a hardware abstraction for the output driver, but do not drive real GPIOs until the pinout is explicitly defined.
-6. Add a burst-fire/full-wave scheduler module that converts `duty_permille` into on/off full-wave decisions.
-7. Add a simulated zero-cross mode for firmware testing.
-8. Add a hardware zero-cross interface later.
-9. Add persistent config via NVS after the protocol is stable.
-10. Add clear serial logs and protocol examples.
+- ESP-IDF project structure
+- ESP32-S3 default target
+- `main/app_main.c`
+- `main/control.c/.h`
+- `main/output_driver.c/.h`
+- `main/safety.c/.h`
+- `main/uart_protocol.c/.h`
+- UART JSON line protocol
+- GPIO17 default SSR output
+- 20 ms control loop
+- 50 Hz full-wave burst scheduler
+- README setup and UART examples
 
 ## Control behavior
 
-Use grid power convention:
+Grid power convention:
 
 ```text
 grid_power_w > 0 = grid import
@@ -92,62 +89,84 @@ Outputs must be OFF for:
 
 - disabled mode
 - enable flag false
-- UART timeout
+- emergency stop
+- UART/process-value timeout
+- invalid temperature values
 - overtemperature
 - invalid config
 - internal error
 - future zero-cross sync loss
 - future hardware fault input
 
+Never weaken fail-safe behavior.
+
 ## UART protocol
 
 Keep the first protocol line-based JSON. See `docs/uart_protocol.md`.
 
-Example process values:
+Direct burst test:
 
 ```json
-{"type":"process_values","grid_power_w":-1200,"pv_power_w":5400,"load_power_w":0,"temp_1_c":30,"temp_2_c":31,"enable":true}
+{"type":"config","control_mode":"burst_percent","power_nominal_w":3500,"target_power_percent":30,"burst_window_ms":1000,"ssr_gpio_pin":17,"temperature_limit_c":85,"uart_timeout_ms":3000}
 ```
-
-Example config:
 
 ```json
-{"type":"config","control_mode":"pv_surplus","max_power_w":3500,"min_power_w":0,"target_grid_power_w":0,"temperature_limit_c":85,"uart_timeout_ms":3000}
+{"type":"process_values","grid_power_w":-1200,"pv_power_w":5400,"tank_top_c":50,"tank_mid_c":45,"tank_bottom_c":40,"flow_line_c":38,"return_line_c":35,"temp_valid":true,"enable":true}
 ```
 
-Expected status:
+PV surplus test:
 
 ```json
-{"type":"status","power_setpoint_w":1200,"duty_permille":342,"outputs_enabled":true,"fault":"none"}
+{"type":"config","control_mode":"pv_surplus","power_nominal_w":3500,"target_grid_power_w":0,"burst_window_ms":1000,"ssr_gpio_pin":17,"temperature_limit_c":85,"uart_timeout_ms":3000}
 ```
 
-## Branching / Git workflow
+```json
+{"type":"process_values","grid_power_w":-900,"pv_power_w":4500,"tank_top_c":48,"tank_mid_c":42,"tank_bottom_c":37,"flow_line_c":35,"return_line_c":32,"temp_valid":true,"enable":true}
+```
 
-Use small commits. Prefer feature branches and pull requests if possible.
+## Next engineering tasks
+
+1. Build locally with ESP-IDF v5.x and fix any compile warnings/errors.
+2. Add GitHub Actions ESP-IDF build check if feasible.
+3. Add `main/zero_cross.c/.h` for real zero-cross capture and sync-loss detection.
+4. Add `main/nvs_config.c/.h` for persistent config.
+5. Add `docs/hardware_pinout.md` with fixed ESP32-S3 pinout.
+6. Add physical temperature sensor abstraction.
+7. Add hardware fault input abstraction.
+8. Add optional direct Modbus meter polling on ESP32 if required.
+9. Add Wi-Fi/local setup only if product direction requires standalone operation without an external gateway.
+10. Add production-safe output interlock concept: independent limiter, contactor/relay off path, watchdog behavior.
+
+## Git workflow
+
+Use small commits. Prefer feature branches and pull requests for larger work.
 
 Suggested branch names:
 
 ```text
 feature/build-fixes
-feature/output-driver
-feature/burst-fire-scheduler
+feature/zero-cross-input
 feature/nvs-config
 feature/hardware-pinout
+feature/temperature-driver
+feature/modbus-master
 ```
 
-## Do not do yet
+## Do not do
 
-Do not assume final high-voltage hardware pinout.
-Do not drive mains-connected hardware without explicit pinout and safety review.
-Do not remove safety defaults.
+Do not reintroduce Node.js as device runtime.
+Do not reintroduce Docker as device runtime.
+Do not use SQLite on the ESP32.
 Do not replace ESP-IDF with Arduino unless explicitly requested.
 Do not make the UI responsible for realtime control.
+Do not drive mains-connected hardware without isolation and hardware safety review.
+Do not remove default-OFF behavior.
 
-## Definition of done for first Paperclip pass
+## Definition of done for the next pass
 
-- Repo builds with `idf.py build`.
-- `README.md` setup works.
-- UART examples can be sent and status is returned.
-- All outputs remain stubbed/off unless explicitly compiled in for test mode.
-- Code is split into clear modules.
-- TODOs are documented for hardware integration.
+- `idf.py set-target esp32s3` works.
+- `idf.py build` works.
+- UART config/input examples return status JSON.
+- GPIO17 can be measured with an oscilloscope in burst mode.
+- Output goes OFF on timeout, disabled mode, emergency stop and overtemperature.
+- Code remains modular and ready for real hardware drivers.
