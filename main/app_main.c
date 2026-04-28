@@ -263,7 +263,8 @@ static void control_task(void *arg)
         publish_runtime_state(&output, &safety, output_state.output_level);
 
         if (period_elapsed(&g_last_history_us, THERMOWORK_HISTORY_PERIOD_MS)) {
-            thermowork_history_store_add(&thermowork_app_state_get_status());
+            thermowork_runtime_status_t snapshot = thermowork_app_state_get_status();
+            thermowork_history_store_add(&snapshot);
         }
 
         if (period_elapsed(&g_last_status_us, THERMOWORK_STATUS_PERIOD_MS)) {
