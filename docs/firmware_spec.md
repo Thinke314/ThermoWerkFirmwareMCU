@@ -4,19 +4,17 @@
 
 This repository is the ESP32-S3 firmware implementation of the ThermoWerk3p PV-surplus heater controller / Leistungssteller.
 
-The product direction is MCU-only:
+The product direction is local-first ESP32-only:
 
 - no Linux runtime on the device
 - no Node.js runtime on the device
 - no SQLite runtime on the device
 - no Docker runtime on the device
-- ESP32-S3 owns control, safety and SSR output scheduling
+- ESP32-S3 owns control, safety, local interface, SSR output scheduling and optional cloud telemetry
 
 ThermoWerk3p remains the reference/prototype repository. This repository is the firmware product line for the ESP32.
 
-## Current first implementation phase
-
-Implemented now:
+## Implemented now
 
 - ESP-IDF firmware project
 - ESP32-S3 default target
@@ -33,24 +31,55 @@ Implemented now:
 - multi-channel temperature safety
 - UART/process-value timeout
 - emergency stop flag
-- JSON status telemetry every 500 ms
+- local Wi-Fi setup AP
+- embedded local web interface
+- local REST API
+- local RAM history ring buffer
+- optional HTTP cloud telemetry client
+- JSON status telemetry every 500 ms over UART
 
-Not implemented yet:
+## Local interface
 
-- true hardware zero-cross input capture
-- NVS persistent configuration
-- direct Modbus master on ESP32
-- local web UI / Wi-Fi configuration
-- OTA update
-- physical temperature sensor drivers
-- 3-phase topology handling
-- relay/contactor output
-- hardware fault inputs
+The firmware starts a fallback Wi-Fi access point:
+
+```text
+SSID: ThermoWerk-Setup
+Password: thermowerk
+```
+
+The ESP32 serves a local UI and API on port 80:
+
+```text
+GET  /
+GET  /api/status
+GET  /api/history
+POST /api/config
+POST /api/inputs
+POST /api/command
+POST /api/cloud
+```
+
+The local interface is not a separate backend. It is compiled into the ESP32 firmware and directly shares runtime state with the control loop.
+
+## Cloud behavior
+
+Cloud is optional telemetry only in the current implementation.
+
+- Cloud failure must not stop local control.
+- Cloud status is reflected in runtime status.
+- Telemetry is HTTP POST to a configured endpoint.
+- No cloud command execution is implemented yet.
+- Future cloud commands must pass through the same local safety and config validation path as local API and UART commands.
 
 ## Runtime responsibilities on ESP32
 
 The ESP32 owns:
 
+- Wi-Fi setup AP
+- local web UI
+- local REST API
+- runtime state
+- local history buffer
 - process-value supervision
 - local control mode selection
 - PV-surplus power calculation
@@ -61,17 +90,17 @@ The ESP32 owns:
 - final output enable decision
 - SSR GPIO command
 - burst-fire/full-wave scheduling
+- optional cloud telemetry
 - status reporting
 
-An optional host/gateway/UI owns only:
+External systems may provide:
 
-- user interface
-- high-level configuration
-- optional Modbus polling from external meters or EMS
-- sending process values to ESP32 over UART
-- reading ESP32 status over UART
+- Modbus-derived meter values
+- cloud telemetry receiver
+- future mobile app or dashboard
+- production test commands
 
-The host must not be required for the fast output decision once valid input values are available.
+External systems must not be required for the fast realtime output decision once valid inputs are available.
 
 ## Grid power convention
 
@@ -158,10 +187,21 @@ Future safety additions:
 - independent safety limiter integration
 - relay/contactor de-energize output
 
+## Current limitations
+
+- Wi-Fi STA credential storage is not implemented yet.
+- NVS persistent product config is not implemented yet.
+- Real sensor drivers are not implemented yet.
+- Direct Modbus master is not implemented yet.
+- Cloud command downlink is intentionally not implemented yet.
+- OTA update is not implemented yet.
+- True hardware zero-cross capture is not implemented yet.
+
 ## First target hardware assumption
 
 - ESP32-S3
 - UART0 debug/control transport
+- local AP for setup
 - SSR command output on GPIO17 by default
 - external isolated zero-cross SSR/opto input stage
 - no direct mains connection to ESP32 GPIO
@@ -171,9 +211,10 @@ Future safety additions:
 ```text
 main/zero_cross.c/.h       true zero-cross capture and sync-loss detection
 main/temperature.c/.h      real sensor inputs instead of UART-only values
-main/nvs_config.c/.h       persistent config storage
+main/nvs_config.c/.h       persistent config storage and Wi-Fi credentials
 main/modbus_master.c/.h    optional direct meter polling
-main/wifi_api.c/.h         local setup/API if product needs no external host
+main/ota_update.c/.h       product update path
+main/cloud_commands.c/.h   safe cloud downlink path if required
 docs/hardware_pinout.md    fixed pinout and electrical assumptions
 ```
 
