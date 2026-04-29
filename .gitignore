@@ -1,24 +1,11 @@
-# ESP-IDF build output
 build/
-sdkconfig
-sdkconfig.old
+.vscode/ipch/
 managed_components/
-dependencies.lock
-
-# VS Code
-.vscode/*
-!.vscode/extensions.json
-!.vscode/settings.json
-
-# OS files
+sdkconfig
+*.bin
+*.elf
+*.map
+*.uf2
+*.log
 .DS_Store
 Thumbs.db
-
-# Python
-__pycache__/
-*.pyc
-.venv/
-venv/
-
-# Logs
-*.log

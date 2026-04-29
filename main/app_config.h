@@ -1,0 +1,7 @@
+#pragma once
+#include "driver/gpio.h"
+#define THERMOWORK_FW_VERSION "0.1.0-mvp"
+#define THERMOWORK_DEVICE_NAME "ThermoWerk ESP32-S3"
+#define THERMOWORK_SSR_GPIO GPIO_NUM_17
+#define THERMOWORK_ZERO_CROSS_GPIO GPIO_NUM_16
+#define THERMOWORK_STATUS_LED_GPIO GPIO_NUM_NC
