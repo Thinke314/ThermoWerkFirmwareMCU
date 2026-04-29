@@ -1,13 +1,3 @@
 #pragma once
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-// Starts Wi-Fi in AP+STA capable mode. The first implementation always starts
-// a local fallback access point so the ESP32 can be configured without Linux.
-void thermowork_wifi_manager_start(void);
-
-#ifdef __cplusplus
-}
-#endif
+#include <stdbool.h>
+void wifi_manager_start(void); const char *wifi_manager_get_ip(void); bool wifi_manager_is_connected(void); const char *wifi_manager_get_mode(void);
